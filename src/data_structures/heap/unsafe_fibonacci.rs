@@ -3,10 +3,13 @@
 use std::mem;
 use std::ptr;
 use std::cmp::Ordering;
+use std::collections::HashMap;
+use std::hash::Hash;
 
-pub struct FibonacciHeap<T: PartialOrd> {
+pub struct FibonacciHeap<T: PartialOrd + Eq + Hash + Clone> {
     size: usize,
     min: Link<T>,
+    lookup: HashMap<T, Link<T>>,
     tree_table: Vec<Link<T>>,
     to_visit: Vec<Link<T>>,
 }
@@ -27,13 +30,14 @@ struct Link<T: PartialOrd> {
     entry: *mut Entry<T>,
 }
 
-impl<T: PartialOrd> FibonacciHeap<T> {
+impl<T: PartialOrd + Eq + Hash + Clone> FibonacciHeap<T> {
     pub fn new() -> FibonacciHeap<T> {
         FibonacciHeap {
-            min: Link::none(),
             size: 0,
-            to_visit: Vec::new(),
+            min: Link::none(),
+            lookup: HashMap::new(),
             tree_table: Vec::new(),
+            to_visit: Vec::new(),
         }
     }
 
@@ -50,11 +54,13 @@ impl<T: PartialOrd> FibonacciHeap<T> {
     }
 
     pub fn push(&mut self, value: T) {
+        let lookup_value = value.clone();
         let link = Link::new(value);
 
         let mut min = Link::none();
         mem::swap(&mut min, &mut self.min);
 
+        self.lookup.insert(lookup_value, link.clone());
         self.min = FibonacciHeap::<T>::merge_entries(min, link);
         self.size += 1;
     }
@@ -157,6 +163,21 @@ impl<T: PartialOrd> FibonacciHeap<T> {
         self.tree_table.clear();
 
         min.into_value()
+    }
+
+    pub fn decrease_key(&mut self, previous_value: T, decreased_value: T) {
+        let mut link = self.lookup.get(&previous_value).expect("Could not find key to decrease").clone();
+        link.set_value(decreased_value);
+
+        let parent = link.get_parent();
+
+        if parent.is_some() && link <= parent {
+            // self.cut_link(link);
+        }
+
+        if link <= self.min {
+            self.min = link;
+        }
     }
 
     pub fn merge(x: FibonacciHeap<T>, y: FibonacciHeap<T>) -> FibonacciHeap<T> {
@@ -331,6 +352,15 @@ impl<T: PartialOrd> Link<T> {
     }
 
     #[inline]
+    pub fn get_parent(&self) -> Link<T> {
+        if self.is_none() {
+            Link::<T>::none()
+        } else {
+            unsafe { (*self.entry).parent.clone() }
+        }
+    }
+
+    #[inline]
     pub fn set_next(&mut self, next: &Link<T>) {
         if self.is_some() {
             unsafe {
@@ -344,6 +374,15 @@ impl<T: PartialOrd> Link<T> {
         if self.is_some() {
             unsafe {
                 (*self.entry).prev = prev.clone();
+            }
+        }
+    }
+
+    #[inline]
+    pub fn set_value(&mut self, value: T) {
+        if self.is_some() {
+            unsafe {
+                (*self.entry).value = value;
             }
         }
     }
@@ -425,6 +464,21 @@ fn test_order() {
     assert_eq!(5, heap.pop().unwrap());
     assert_eq!(6, heap.pop().unwrap());
     assert_eq!(7, heap.pop().unwrap());
+    assert_eq!(8, heap.pop().unwrap());
+}
+
+#[test]
+fn test_decrease_key() {
+    let mut heap = FibonacciHeap::new();
+
+    heap.push(7);
+    heap.push(1);
+    heap.push(8);
+
+    heap.decrease_key(7, 4);
+
+    assert_eq!(1, heap.pop().unwrap());
+    assert_eq!(4, heap.pop().unwrap());
     assert_eq!(8, heap.pop().unwrap());
 }
 
