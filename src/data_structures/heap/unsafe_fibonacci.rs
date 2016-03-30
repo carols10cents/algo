@@ -16,10 +16,8 @@ pub struct FibonacciHeap<T: PartialOrd + Eq + Hash + Clone> {
 
 struct Entry<T: PartialOrd> {
     pub value: T,
-
     pub degree: usize,
-    // TODO: Implement decrease_key and delete
-    // pub is_marked: bool,
+    pub is_marked: bool,
     pub parent: Link<T>,
     pub next: Link<T>,
     pub prev: Link<T>,
@@ -172,7 +170,7 @@ impl<T: PartialOrd + Eq + Hash + Clone> FibonacciHeap<T> {
         let parent = link.get_parent();
 
         if parent.is_some() && link <= parent {
-            // self.cut_link(link);
+            self.cut_link(link.clone());
         }
 
         if link <= self.min {
@@ -211,15 +209,65 @@ impl<T: PartialOrd + Eq + Hash + Clone> FibonacciHeap<T> {
             }
         }
     }
+
+    fn cut_link(&mut self, mut link: Link<T>) {
+        link.set_is_marked(false);
+
+        // Base case: If the link has no parent, we're done.
+        if link.get_parent().is_some() {
+            // Rewire the link's siblings around it, if it has any siblings.
+            if !link.get_next().are_same(&link) {
+                let mut prev = link.get_prev();
+                let mut next = link.get_next();
+                prev.set_next(&next);
+                next.set_prev(&prev);
+            }
+
+            // If the link is the one identified by its parent as its child,
+            // we need to rewrite that pointer to point to some arbitrary other
+            // child.
+            let mut parent = link.get_parent();
+            if parent.get_child().are_same(&link) {
+                // If there are any other children, pick one of them arbitrarily.
+                if !link.get_next().are_same(&link) {
+                    parent.set_child(&link.get_next());
+                } else {
+                    // Otherwise, there aren't any children left and we should clear the
+                    // pointer and drop the links's degree.
+                    parent.set_child(&Link::none());
+                }
+            }
+
+            // Decrease the degree of the parent, since it just lost a child.
+            parent.dec_degree();
+
+            link.convert_to_singleton();
+
+            // Clear the relocated link's parent; it's now a root.
+            link.set_parent(&Link::none());
+
+            // Splice this link into the root list by merging
+            let mut min = Link::none();
+            mem::swap(&mut min, &mut self.min);
+            self.min = FibonacciHeap::<T>::merge_entries(min, link);
+
+            // Recursively cut the former parent if it's already been marked
+            if parent.get_is_marked() {
+                self.cut_link(parent);
+            } else {
+                // Otherwise, mark it
+                parent.set_is_marked(true);
+            }
+        }
+    }
 }
 
 impl<T: PartialOrd> Entry<T> {
     pub fn new(value: T) -> Entry<T> {
         Entry {
             value: value,
-
             degree: 0,
-            // is_marked: false,
+            is_marked: false,
             parent: Link::none(),
             next: Link::none(),
             prev: Link::none(),
@@ -272,6 +320,15 @@ impl<T: PartialOrd> Link<T> {
         if self.is_some() {
             unsafe {
                 (*self.entry).degree += 1;
+            }
+        }
+    }
+
+    #[inline]
+    pub fn dec_degree(&mut self) {
+        if self.is_some() {
+            unsafe {
+                (*self.entry).degree -= 1;
             }
         }
     }
@@ -384,6 +441,32 @@ impl<T: PartialOrd> Link<T> {
             unsafe {
                 (*self.entry).value = value;
             }
+        }
+    }
+
+    #[inline]
+    pub fn convert_to_singleton(&mut self) {
+        if self.is_some() {
+            unsafe {
+                (*self.entry).next = self.clone();
+                (*self.entry).prev = self.clone();
+            }
+        }
+    }
+
+    #[inline]
+    pub fn set_is_marked(&mut self, is_marked: bool) {
+        if self.is_some() {
+            unsafe { (*self.entry).is_marked = is_marked }
+        }
+    }
+
+    #[inline]
+    pub fn get_is_marked(&mut self) -> bool {
+        if self.is_some() {
+            unsafe { (*self.entry).is_marked }
+        } else {
+            false
         }
     }
 }
