@@ -580,3 +580,18 @@ fn bench_push_pop(b: &mut ::test::Bencher) {
         }
     })
 }
+
+#[bench]
+fn bench_decrease_key(b: &mut ::test::Bencher) {
+    b.iter(|| {
+        let mut heap = FibonacciHeap::new();
+
+        for i in 1..10001 {
+            heap.push(10001 - i);
+        }
+
+        for i in 1..10001 {
+            heap.decrease_key(i, i - 1);
+        }
+    })
+}
