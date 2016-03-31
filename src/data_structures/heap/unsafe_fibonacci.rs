@@ -5,8 +5,10 @@ use std::ptr;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::hash::Hash;
+use std::fmt::Debug;
 
-pub struct FibonacciHeap<I: Eq + Hash + Copy, T: PartialOrd> {
+#[derive(Debug)]
+pub struct FibonacciHeap<I: Eq + Hash + Copy + Debug, T: PartialOrd + Debug> {
     size: usize,
     min: Link<I, T>,
     lookup: HashMap<I, Link<I, T>>,
@@ -14,7 +16,8 @@ pub struct FibonacciHeap<I: Eq + Hash + Copy, T: PartialOrd> {
     to_visit: Vec<Link<I, T>>,
 }
 
-struct Entry<I: Eq + Hash + Copy, T: PartialOrd> {
+#[derive(Debug)]
+struct Entry<I: Eq + Hash + Copy + Debug, T: PartialOrd + Debug> {
     pub id: I,
     pub value: T,
     pub degree: usize,
@@ -25,11 +28,12 @@ struct Entry<I: Eq + Hash + Copy, T: PartialOrd> {
     pub child: Link<I, T>,
 }
 
-struct Link<I: Eq + Hash + Copy, T: PartialOrd> {
+#[derive(Debug)]
+struct Link<I: Eq + Hash + Copy + Debug, T: PartialOrd + Debug> {
     entry: *mut Entry<I, T>,
 }
 
-impl<I: Eq + Hash + Copy, T: PartialOrd> FibonacciHeap<I, T> {
+impl<I: Eq + Hash + Copy + Debug, T: PartialOrd + Debug> FibonacciHeap<I, T> {
     pub fn new() -> FibonacciHeap<I, T> {
         FibonacciHeap {
             size: 0,
@@ -275,7 +279,7 @@ impl<I: Eq + Hash + Copy, T: PartialOrd> FibonacciHeap<I, T> {
     }
 }
 
-impl<I: Eq + Hash + Copy, T: PartialOrd> Entry<I, T> {
+impl<I: Eq + Hash + Copy + Debug, T: PartialOrd + Debug> Entry<I, T> {
     pub fn new(id: I, value: T) -> Entry<I, T> {
         Entry {
             id: id,
@@ -290,7 +294,7 @@ impl<I: Eq + Hash + Copy, T: PartialOrd> Entry<I, T> {
     }
 }
 
-impl<I: Eq + Hash + Copy, T: PartialOrd> Link<I, T> {
+impl<I: Eq + Hash + Copy + Debug, T: PartialOrd + Debug> Link<I, T> {
     #[inline]
     pub fn none() -> Link<I, T> {
         Link { entry: ptr::null_mut() }
@@ -505,14 +509,14 @@ impl<I: Eq + Hash + Copy, T: PartialOrd> Link<I, T> {
     }
 }
 
-impl<I: Eq + Hash + Copy, T: PartialOrd> Clone for Link<I, T> {
+impl<I: Eq + Hash + Copy + Debug, T: PartialOrd + Debug> Clone for Link<I, T> {
     #[inline]
     fn clone(&self) -> Self {
         Link { entry: self.entry.clone() }
     }
 }
 
-impl<I: Eq + Hash + Copy, T: PartialOrd> PartialEq for Link<I, T> {
+impl<I: Eq + Hash + Copy + Debug, T: PartialOrd + Debug> PartialEq for Link<I, T> {
     #[inline]
     fn eq(&self, other: &Link<I, T>) -> bool {
         if self.is_none() || other.is_none() {
@@ -523,7 +527,7 @@ impl<I: Eq + Hash + Copy, T: PartialOrd> PartialEq for Link<I, T> {
     }
 }
 
-impl<I: Eq + Hash + Copy, T: PartialOrd> PartialOrd for Link<I, T> {
+impl<I: Eq + Hash + Copy + Debug, T: PartialOrd + Debug> PartialOrd for Link<I, T> {
     #[inline]
     fn partial_cmp(&self, other: &Link<I, T>) -> Option<Ordering> {
         if self.is_none() || other.is_none() {
