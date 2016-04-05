@@ -274,17 +274,18 @@ impl<I: Eq + Hash + Copy + Debug, T: PartialOrd + Debug> FibonacciHeap<I, T> {
         }
     }
 
+    // https://github.com/jgrapht/jgrapht/blob/master/jgrapht-core/src/main/java/org/jgrapht/util/FibonacciHeap.java#L136
     pub fn decrease_key(&mut self, id: I, decreased_value: T) {
         let mut link = self.lookup.get(&id).expect("Could not find key to decrease").clone();
         link.set_value(decreased_value);
 
         let parent = link.get_parent();
 
-        if parent.is_some() && link <= parent {
+        if parent.is_some() && link < parent {
             self.cut_link(link.clone());
         }
 
-        if link <= self.min {
+        if link < self.min {
             self.min = link;
         }
     }
