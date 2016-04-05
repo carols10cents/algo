@@ -291,15 +291,6 @@ impl<I: Eq + Hash + Copy + Debug, T: PartialOrd + Debug> FibonacciHeap<I, T> {
         }
     }
 
-    pub fn merge(x: FibonacciHeap<I, T>, y: FibonacciHeap<I, T>) -> FibonacciHeap<I, T> {
-        let mut result = FibonacciHeap::new();
-
-        result.min = FibonacciHeap::<I, T>::merge_entries(x.min, y.min);
-        result.size = x.size + y.size;
-
-        result
-    }
-
     fn concat_into_root_list(mut min_node: Link<I, T>, mut node: Link<I, T>) -> Link<I, T> {
         // concatenate node into min list --
         // https://github.com/jgrapht/jgrapht/blob/master/jgrapht-core/src/main/java/org/jgrapht/util/FibonacciHeap.java#L195
@@ -319,29 +310,6 @@ impl<I: Eq + Hash + Copy + Debug, T: PartialOrd + Debug> FibonacciHeap<I, T> {
             }
         } else {
             node
-        }
-    }
-
-    fn merge_entries(mut x: Link<I, T>, mut y: Link<I, T>) -> Link<I, T> {
-        if x.is_none() && y.is_none() {
-            Link::none()
-        } else if !x.is_none() && y.is_none() {
-            x
-        } else if x.is_none() && !y.is_none() {
-            y
-        } else {
-            let mut x_next = x.get_next();
-            let mut y_next = y.get_next();
-            x.set_next(&y_next);
-            y_next.set_prev(&x);
-            y.set_next(&x_next);
-            x_next.set_prev(&y);
-
-            if x < y {
-                x
-            } else {
-                y
-            }
         }
     }
 
