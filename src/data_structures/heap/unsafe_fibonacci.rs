@@ -282,7 +282,8 @@ impl<I: Eq + Hash + Copy + Debug, T: PartialOrd + Debug> FibonacciHeap<I, T> {
         let parent = link.get_parent();
 
         if parent.is_some() && link < parent {
-            self.cut_link(link.clone());
+            self.cut(link.clone(), parent.clone());
+            self.cascading_cut(parent.clone());
         }
 
         if link < self.min {
@@ -344,53 +345,49 @@ impl<I: Eq + Hash + Copy + Debug, T: PartialOrd + Debug> FibonacciHeap<I, T> {
         }
     }
 
-    fn cut_link(&mut self, mut link: Link<I, T>) {
+    // https://github.com/jgrapht/jgrapht/blob/master/jgrapht-core/src/main/java/org/jgrapht/util/FibonacciHeap.java#L532
+    fn cut(&mut self, mut link: Link<I, T>, mut parent: Link<I, T>) {
+        // remove link from the child list of parent and decrement degree of the parent
+        link.get_prev().set_next(&link.get_next());
+        link.get_next().set_prev(&link.get_prev());
+        parent.dec_degree();
+
+        // reset parent.child if necessary
+        if parent.get_child().are_same(&link) {
+            parent.set_child(&link.get_next());
+        }
+
+        if parent.get_degree() == 0 {
+            parent.set_child(&Link::none());
+        }
+
+        // add link to root list of heap
+        link.set_prev(&self.min);
+        link.set_next(&self.min.get_next());
+        self.min.set_next(&link);
+        link.get_next().set_prev(&link);
+
+        // set parent of link to none
+        link.set_parent(&Link::none());
+
+        // set link marked to false
         link.set_is_marked(false);
+    }
 
-        // Base case: If the link has no parent, we're done.
-        if link.get_parent().is_some() {
-            // Rewire the link's siblings around it, if it has any siblings.
-            if !link.get_next().are_same(&link) {
-                let mut prev = link.get_prev();
-                let mut next = link.get_next();
-                prev.set_next(&next);
-                next.set_prev(&prev);
-            }
+    // https://github.com/jgrapht/jgrapht/blob/master/jgrapht-core/src/main/java/org/jgrapht/util/FibonacciHeap.java#L402
+    fn cascading_cut(&mut self, mut link: Link<I, T>) {
+        let parent = link.get_parent();
 
-            // If the link is the one identified by its parent as its child,
-            // we need to rewrite that pointer to point to some arbitrary other
-            // child.
-            let mut parent = link.get_parent();
-            if parent.get_child().are_same(&link) {
-                // If there are any other children, pick one of them arbitrarily.
-                if !link.get_next().are_same(&link) {
-                    parent.set_child(&link.get_next());
-                } else {
-                    // Otherwise, there aren't any children left and we should clear the
-                    // pointer and drop the links's degree.
-                    parent.set_child(&Link::none());
-                }
-            }
-
-            // Decrease the degree of the parent, since it just lost a child.
-            parent.dec_degree();
-
-            link.convert_to_singleton();
-
-            // Clear the relocated link's parent; it's now a root.
-            link.set_parent(&Link::none());
-
-            // Splice this link into the root list by merging
-            let mut min = Link::none();
-            mem::swap(&mut min, &mut self.min);
-            self.min = FibonacciHeap::<I, T>::merge_entries(min, link);
-
-            // Recursively cut the former parent if it's already been marked
-            if parent.get_is_marked() {
-                self.cut_link(parent);
+        // if there's a parent...
+        if parent.is_some() {
+            // if link is unmarked, set it marked
+            if !link.get_is_marked() {
+                link.set_is_marked(true);
             } else {
-                // Otherwise, mark it
-                parent.set_is_marked(true);
+                // it's marked, cut it from parent
+                self.cut(link.clone(), parent.clone());
+                // cut its parent as well
+                self.cascading_cut(parent.clone());
             }
         }
     }
