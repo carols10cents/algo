@@ -63,7 +63,7 @@ impl<I: Eq + Hash + Copy + Debug, T: PartialOrd + Debug> FibonacciHeap<I, T> {
         mem::swap(&mut min, &mut self.min);
 
         self.lookup.insert(id, link.clone());
-        self.min = FibonacciHeap::<I, T>::merge_entries(min, link);
+        self.min = FibonacciHeap::<I, T>::concat_into_root_list(min, link);
         self.size += 1;
     }
 
@@ -202,6 +202,28 @@ impl<I: Eq + Hash + Copy + Debug, T: PartialOrd + Debug> FibonacciHeap<I, T> {
         result.size = x.size + y.size;
 
         result
+    }
+
+    fn concat_into_root_list(mut min_node: Link<I, T>, mut node: Link<I, T>) -> Link<I, T> {
+        // concatenate node into min list --
+        // https://github.com/jgrapht/jgrapht/blob/master/jgrapht-core/src/main/java/org/jgrapht/util/FibonacciHeap.java#L195
+        // left => prev
+        // right => next
+        if !min_node.is_none() {
+            node.set_prev(&min_node);
+            node.set_next(&min_node.get_next());
+
+            min_node.set_next(&node);
+            node.get_next().set_prev(&node);
+
+            if node < min_node {
+                node
+            } else {
+                min_node
+            }
+        } else {
+            node
+        }
     }
 
     fn merge_entries(mut x: Link<I, T>, mut y: Link<I, T>) -> Link<I, T> {
