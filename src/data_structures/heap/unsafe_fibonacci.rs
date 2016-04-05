@@ -3,37 +3,44 @@
 use std::mem;
 use std::ptr;
 use std::cmp::Ordering;
+use std::collections::HashMap;
+use std::hash::Hash;
+use std::fmt::Debug;
 
-pub struct FibonacciHeap<T: PartialOrd> {
+#[derive(Debug)]
+pub struct FibonacciHeap<I: Eq + Hash + Copy + Debug, T: PartialOrd + Debug> {
     size: usize,
-    min: Link<T>,
-    tree_table: Vec<Link<T>>,
-    to_visit: Vec<Link<T>>,
+    min: Link<I, T>,
+    lookup: HashMap<I, Link<I, T>>,
+    tree_table: Vec<Link<I, T>>,
+    to_visit: Vec<Link<I, T>>,
 }
 
-struct Entry<T: PartialOrd> {
+#[derive(Debug)]
+struct Entry<I: Eq + Hash + Copy + Debug, T: PartialOrd + Debug> {
+    pub id: I,
     pub value: T,
-
     pub degree: usize,
-    // TODO: Implement decrease_key and delete
-    // pub is_marked: bool,
-    pub parent: Link<T>,
-    pub next: Link<T>,
-    pub prev: Link<T>,
-    pub child: Link<T>,
+    pub is_marked: bool,
+    pub parent: Link<I, T>,
+    pub next: Link<I, T>,
+    pub prev: Link<I, T>,
+    pub child: Link<I, T>,
 }
 
-struct Link<T: PartialOrd> {
-    entry: *mut Entry<T>,
+#[derive(Debug)]
+struct Link<I: Eq + Hash + Copy + Debug, T: PartialOrd + Debug> {
+    entry: *mut Entry<I, T>,
 }
 
-impl<T: PartialOrd> FibonacciHeap<T> {
-    pub fn new() -> FibonacciHeap<T> {
+impl<I: Eq + Hash + Copy + Debug, T: PartialOrd + Debug> FibonacciHeap<I, T> {
+    pub fn new() -> FibonacciHeap<I, T> {
         FibonacciHeap {
-            min: Link::none(),
             size: 0,
-            to_visit: Vec::new(),
+            min: Link::none(),
+            lookup: HashMap::new(),
             tree_table: Vec::new(),
+            to_visit: Vec::new(),
         }
     }
 
@@ -49,156 +56,318 @@ impl<T: PartialOrd> FibonacciHeap<T> {
         self.size
     }
 
-    pub fn push(&mut self, value: T) {
-        let link = Link::new(value);
+    pub fn push(&mut self, id: I, value: T) {
+        let link = Link::new(id, value);
 
         let mut min = Link::none();
         mem::swap(&mut min, &mut self.min);
 
-        self.min = FibonacciHeap::<T>::merge_entries(min, link);
+        self.lookup.insert(id, link.clone());
+        self.min = FibonacciHeap::<I, T>::concat_into_root_list(min, link);
         self.size += 1;
     }
 
     pub fn pop(&mut self) -> Option<T> {
+        // https://github.com/jgrapht/jgrapht/blob/master/jgrapht-core/src/main/java/org/jgrapht/util/FibonacciHeap.java#L237
         if self.is_empty() {
             return None;
         }
 
+        let mut z = Link::none();
+        mem::swap(&mut z, &mut self.min);
+        // println!("popping z, is {:?}", z.borrow());
+
+        let mut num_kids = z.get_degree();
+        let mut x = z.get_child();
+        // println!("x is {:?}", x.borrow());
+        let mut temp_next;
+
+        // for each child of z do...
+        while num_kids > 0 {
+            temp_next = x.get_next();
+
+            // remove x from child list
+            x.get_prev().set_next(&x.get_next());
+            x.get_next().set_prev(&x.get_prev());
+
+            // add x to root list of heap
+            x.set_prev(&z);
+            x.set_next(&z.get_next());
+            z.set_next(&x);
+            x.get_next().set_prev(&x);
+
+            // set parent[x] to null
+            x.set_parent(&Link::none());
+            x = temp_next;
+            // println!("next x is {:?}", x.borrow());
+            num_kids -= 1;
+        }
+
+        // remove z from root list of heap
+        z.get_prev().set_next(&z.get_next());
+        z.get_next().set_prev(&z.get_prev());
+
+        if z.get_next().are_same(&z) {
+            self.min = Link::none();
+        } else {
+            // println!("temporarily setting min to {:?} and calling consolidate", z.get_next().borrow());
+            self.min = z.get_next();
+            self.consolidate();
+        }
+
+        // decrement size of heap
         self.size -= 1;
 
-        let mut min = Link::none();
-        mem::swap(&mut min, &mut self.min);
+        if let Some(id) = z.get_id() {
+            self.lookup.remove(&id);
+        }
+        z.into_value()
+    }
 
-        if !min.get_next().are_same(&min) {
-            let mut min_prev = min.get_prev();
-            let mut min_next = min.get_next();
-            min_prev.set_next(&min_next);
-            min_next.set_prev(&min_prev);
-            self.min = min_next;
+    // https://github.com/jgrapht/jgrapht/blob/master/jgrapht-core/src/main/java/org/jgrapht/util/FibonacciHeap.java#L423
+    fn consolidate(&mut self) {
+        // println!("START CONSOLIDATE =============");
+        let one_over_log_phi: f64 = 1.0 / ((1.0 + 5.0f64.sqrt()).ln() / 2.0);
+        let array_size: usize = (((self.size as f64).ln() * one_over_log_phi).floor() as usize) + 1;
+        // println!("array size is {}", array_size);
+        let mut array = vec![Link::none(); array_size];
+
+        // Find the number of root nodes.
+        let mut num_roots = 0;
+        let mut x = self.min.clone();
+        // println!("x at start of consolidate is {:?}", x.borrow());
+
+        if x.is_some() {
+            num_roots += 1;
+            x = x.get_next();
+            // println!("x next is {:?}", x.borrow());
+            while !x.are_same(&self.min) {
+                num_roots += 1;
+                x = x.get_next();
+                // println!("x next in loop is {:?}", x.borrow());
+            }
         }
 
-        let min_child = min.get_child();
-        if !min_child.is_none() {
-            let mut current = min_child.clone();
-            while {
-                current.set_parent(&Link::none());
-                current = current.get_next();
+        // println!("num_roots is initially {}", num_roots);
 
-                !current.are_same(&min_child)
-            } {}
-        }
+        // For each node in root list do...
+        while num_roots > 0 {
+            // Access this node's degree..
+            let mut d = x.get_degree();
+            // println!("set d to {}", d);
+            let next = x.get_next();
 
-        let mut new_min = Link::none();
-        mem::swap(&mut new_min, &mut self.min);
-
-        self.min = FibonacciHeap::<T>::merge_entries(new_min, min_child);
-
-        if self.size == 0 {
-            return min.into_value();
-        }
-
-        let mut current = self.min.clone();
-        while self.to_visit.is_empty() || !self.to_visit[0].are_same(&current) {
-            let next = current.get_next();
-            self.to_visit.push(current);
-            current = next;
-        }
-
-        for link_to_visit in &self.to_visit {
-            let mut link = link_to_visit.clone();
-
+            // ..and see if there's another of the same degree.
             loop {
-                let link_degree = link.get_degree();
-
-                while link_degree >= self.tree_table.len() {
-                    self.tree_table.push(Link::none());
-                }
-
-                if self.tree_table[link_degree].is_none() {
-                    self.tree_table[link_degree] = link.clone();
-                    break;
-                }
-
-                self.tree_table.push(Link::none());
-                let other = self.tree_table.swap_remove(link_degree);
-
-                let (mut min_link, mut max) = if link < other {
-                    (link, other)
-                } else {
-                    (other, link)
+                match array.get(d) {
+                    None => {
+                        // println!("array.get({}) is None", d);
+                        break
+                    }, // Nope.
+                    Some(y) if y.is_none() => {
+                        // println!("array.get({}) is_none", d);
+                        break
+                    }, // Nope.
+                    Some(y) => {
+                        // println!("collision at {} with {:?}, {:?}", d, x.borrow(), y.borrow());
+                        // There is, make one of the nodes a child of the other.
+                        // Do this based on the key value.
+                        if x > *y {
+                            // println!("setting x {:?} to child, y {:?} to parent", x.borrow(), y.borrow());
+                            self.link(x.clone(), y.clone());
+                            x = y.clone();
+                            // println!("x, the new parent, is now {:?} with child {:?}", x.borrow(), x.get_child().borrow());
+                        } else {
+                            // println!("setting y {:?} to child, x {:?} to parent", y.borrow(), x.borrow());
+                            self.link(y.clone(), x.clone());
+                        }
+                    },
                 };
-
-                let mut max_next = max.get_next();
-                let mut max_prev = max.get_prev();
-                max_next.set_prev(&max_prev);
-                max_prev.set_next(&max_next);
-
-                let max_clone = max.clone();
-                max.set_prev(&max_clone);
-                max.set_next(&max_clone);
-
-                max.set_parent(&min_link);
-
-                let min_link_child = min_link.get_child();
-                min_link.set_child(&FibonacciHeap::<T>::merge_entries(min_link_child, max));
-                // max.is_marked = false;
-
-                min_link.inc_degree();
-
-                link = min_link;
+                // We've handled this degree, go to next one.
+                // println!("setting array[{}] to Link::none", d);
+                array[d] = Link::none();
+                d += 1;
+                // println!("d is now {}", d);
             }
+            // Save this node for later when we might encounter another
+            // of the same degree.
+            // println!("saving parent in array[{}] = {:?}", d, x.borrow());
+            array[d] = x;
 
-            if link <= self.min {
-                self.min = link;
-            }
+            // Move forward through list.
+            x = next;
+            num_roots -= 1;
+            // println!("num_roots is now {}", num_roots);
         }
 
-        self.to_visit.clear();
-        self.tree_table.clear();
+        // Set min to null (effectively losing the root list) and
+        // reconstruct the root list from the array entries in array[].
+        self.min = Link::none();
 
-        min.into_value()
+        // println!("for i in {:?}", 0..array_size);
+
+        for i in 0..array_size {
+            match array.get(i) {
+                None => {
+                    // println!("array.get(i) for {} is None", i);
+                    continue
+                },
+                Some(y) if y.is_none() => {
+                    // println!("array.get(i) for {} is_none", i);
+                    continue
+                },
+                Some(y) => {
+                    // println!("array.get(i) for {} is {:?}", i, y.borrow());
+                    // We've got a live one, add it to root list.
+                    if self.min.is_some() {
+                        // First remove node from root list.
+                        y.get_prev().set_next(&y.get_next());
+                        y.get_next().set_prev(&y.get_prev());
+
+                        let mut min = Link::none();
+                        mem::swap(&mut min, &mut self.min);
+
+                        // println!("deciding on min between curr min {:?} and y {:?}", min.borrow(), y.borrow());
+
+                        // Now add to root list, again.
+                        self.min = FibonacciHeap::<I, T>::concat_into_root_list(min, y.clone());
+                        // println!("min is now {:?}", self.min.borrow());
+                    } else {
+                        // println!("first min is {:?}", y.borrow());
+                        self.min = y.clone();
+                    }
+                }
+            }
+        }
     }
 
-    pub fn merge(x: FibonacciHeap<T>, y: FibonacciHeap<T>) -> FibonacciHeap<T> {
-        let mut result = FibonacciHeap::new();
+    fn link(&mut self, mut child: Link<I, T>, mut parent: Link<I, T>) {
+        // remove child from root list of heap
+        child.get_prev().set_next(&child.get_next());
+        child.get_next().set_prev(&child.get_prev());
 
-        result.min = FibonacciHeap::<T>::merge_entries(x.min, y.min);
-        result.size = x.size + y.size;
+        // make the child a child of the parent
+        child.set_parent(&parent);
+        let mut parent_current_child = parent.get_child();
 
-        result
-    }
-
-    fn merge_entries(mut x: Link<T>, mut y: Link<T>) -> Link<T> {
-        if x.is_none() && y.is_none() {
-            Link::none()
-        } else if !x.is_none() && y.is_none() {
-            x
-        } else if x.is_none() && !y.is_none() {
-            y
+        if parent_current_child.is_none() {
+            parent.set_child(&child);
+            child.convert_to_singleton();
         } else {
-            let mut x_next = x.get_next();
-            let mut y_next = y.get_next();
-            x.set_next(&y_next);
-            y_next.set_prev(&x);
-            y.set_next(&x_next);
-            x_next.set_prev(&y);
+            child.set_prev(&parent_current_child);
+            child.set_next(&parent_current_child.get_next());
+            parent_current_child.set_next(&child);
+            child.get_next().set_prev(&child);
+        }
 
-            if x < y {
-                x
+        // increase degree of the parent
+        parent.inc_degree();
+
+        // set mark of the child to false
+        child.set_is_marked(false);
+    }
+
+    pub fn get(&self, id: I) -> Option<&T> {
+        match self.lookup.get(&id) {
+            Some(link) => link.get_value(),
+            None => None
+        }
+    }
+
+    // https://github.com/jgrapht/jgrapht/blob/master/jgrapht-core/src/main/java/org/jgrapht/util/FibonacciHeap.java#L136
+    pub fn decrease_key(&mut self, id: I, decreased_value: T) {
+        let mut link = self.lookup.get(&id).expect("Could not find key to decrease").clone();
+        link.set_value(decreased_value);
+
+        let parent = link.get_parent();
+
+        if parent.is_some() && link < parent {
+            self.cut(link.clone(), parent.clone());
+            self.cascading_cut(parent.clone());
+        }
+
+        if link < self.min {
+            self.min = link;
+        }
+    }
+
+    fn concat_into_root_list(mut min_node: Link<I, T>, mut node: Link<I, T>) -> Link<I, T> {
+        // concatenate node into min list --
+        // https://github.com/jgrapht/jgrapht/blob/master/jgrapht-core/src/main/java/org/jgrapht/util/FibonacciHeap.java#L195
+        // left => prev
+        // right => next
+        if !min_node.is_none() {
+            node.set_prev(&min_node);
+            node.set_next(&min_node.get_next());
+
+            min_node.set_next(&node);
+            node.get_next().set_prev(&node);
+
+            if node < min_node {
+                node
             } else {
-                y
+                min_node
+            }
+        } else {
+            node
+        }
+    }
+
+    // https://github.com/jgrapht/jgrapht/blob/master/jgrapht-core/src/main/java/org/jgrapht/util/FibonacciHeap.java#L532
+    fn cut(&mut self, mut link: Link<I, T>, mut parent: Link<I, T>) {
+        // remove link from the child list of parent and decrement degree of the parent
+        link.get_prev().set_next(&link.get_next());
+        link.get_next().set_prev(&link.get_prev());
+        parent.dec_degree();
+
+        // reset parent.child if necessary
+        if parent.get_child().are_same(&link) {
+            parent.set_child(&link.get_next());
+        }
+
+        if parent.get_degree() == 0 {
+            parent.set_child(&Link::none());
+        }
+
+        // add link to root list of heap
+        link.set_prev(&self.min);
+        link.set_next(&self.min.get_next());
+        self.min.set_next(&link);
+        link.get_next().set_prev(&link);
+
+        // set parent of link to none
+        link.set_parent(&Link::none());
+
+        // set link marked to false
+        link.set_is_marked(false);
+    }
+
+    // https://github.com/jgrapht/jgrapht/blob/master/jgrapht-core/src/main/java/org/jgrapht/util/FibonacciHeap.java#L402
+    fn cascading_cut(&mut self, mut link: Link<I, T>) {
+        let parent = link.get_parent();
+
+        // if there's a parent...
+        if parent.is_some() {
+            // if link is unmarked, set it marked
+            if !link.get_is_marked() {
+                link.set_is_marked(true);
+            } else {
+                // it's marked, cut it from parent
+                self.cut(link.clone(), parent.clone());
+                // cut its parent as well
+                self.cascading_cut(parent.clone());
             }
         }
     }
 }
 
-impl<T: PartialOrd> Entry<T> {
-    pub fn new(value: T) -> Entry<T> {
+impl<I: Eq + Hash + Copy + Debug, T: PartialOrd + Debug> Entry<I, T> {
+    pub fn new(id: I, value: T) -> Entry<I, T> {
         Entry {
+            id: id,
             value: value,
-
             degree: 0,
-            // is_marked: false,
+            is_marked: false,
             parent: Link::none(),
             next: Link::none(),
             prev: Link::none(),
@@ -207,9 +376,9 @@ impl<T: PartialOrd> Entry<T> {
     }
 }
 
-impl<T: PartialOrd> Link<T> {
+impl<I: Eq + Hash + Copy + Debug, T: PartialOrd + Debug> Link<I, T> {
     #[inline]
-    pub fn none() -> Link<T> {
+    pub fn none() -> Link<I, T> {
         Link { entry: ptr::null_mut() }
     }
 
@@ -223,8 +392,8 @@ impl<T: PartialOrd> Link<T> {
         !self.is_none()
     }
 
-    pub fn new(value: T) -> Link<T> {
-        let entry_box = Box::new(Entry::new(value));
+    pub fn new(id: I, value: T) -> Link<I, T> {
+        let entry_box = Box::new(Entry::new(id, value));
         let entry = Box::into_raw(entry_box);
         let prev = entry.clone();
         let next = entry.clone();
@@ -255,19 +424,48 @@ impl<T: PartialOrd> Link<T> {
         }
     }
 
+    #[inline]
+    pub fn dec_degree(&mut self) {
+        if self.is_some() {
+            unsafe {
+                (*self.entry).degree -= 1;
+            }
+        }
+    }
+
+    pub fn get_id(&self) -> Option<I> {
+        if self.is_none() {
+            None
+        } else {
+            unsafe {
+                Some ((*self.entry).id)
+            }
+        }
+    }
+
     pub fn into_value(mut self) -> Option<T> {
         if self.is_none() {
             None
         } else {
-            let mut raw_entry: *mut Entry<T> = ptr::null_mut();
+            let mut raw_entry: *mut Entry<I, T> = ptr::null_mut();
             mem::swap(&mut raw_entry, &mut self.entry);
 
-            let entry: Entry<T>;
+            let entry: Entry<I, T>;
             unsafe {
                 entry = *Box::from_raw(raw_entry);
             }
 
             Some(entry.value)
+        }
+    }
+
+    pub fn get_value(&self) -> Option<&T> {
+        if self.is_none() {
+            None
+        } else {
+            unsafe {
+                Some(&(*self.entry).value)
+            }
         }
     }
 
@@ -281,39 +479,39 @@ impl<T: PartialOrd> Link<T> {
     }
 
     #[inline]
-    pub fn are_same(&self, other: &Link<T>) -> bool {
+    pub fn are_same(&self, other: &Link<I, T>) -> bool {
         self.entry == other.entry
     }
 
     #[inline]
-    pub fn get_child(&self) -> Link<T> {
+    pub fn get_child(&self) -> Link<I, T> {
         if self.is_none() {
-            Link::<T>::none()
+            Link::<I, T>::none()
         } else {
             unsafe { (*self.entry).child.clone() }
         }
     }
 
     #[inline]
-    pub fn get_next(&self) -> Link<T> {
+    pub fn get_next(&self) -> Link<I, T> {
         if self.is_none() {
-            Link::<T>::none()
+            Link::<I, T>::none()
         } else {
             unsafe { (*self.entry).next.clone() }
         }
     }
 
     #[inline]
-    pub fn get_prev(&self) -> Link<T> {
+    pub fn get_prev(&self) -> Link<I, T> {
         if self.is_none() {
-            Link::<T>::none()
+            Link::<I, T>::none()
         } else {
             unsafe { (*self.entry).prev.clone() }
         }
     }
 
     #[inline]
-    pub fn set_child(&mut self, child: &Link<T>) {
+    pub fn set_child(&mut self, child: &Link<I, T>) {
         if self.is_some() {
             unsafe {
                 (*self.entry).child = child.clone();
@@ -322,7 +520,7 @@ impl<T: PartialOrd> Link<T> {
     }
 
     #[inline]
-    pub fn set_parent(&mut self, parent: &Link<T>) {
+    pub fn set_parent(&mut self, parent: &Link<I, T>) {
         if self.is_some() {
             unsafe {
                 (*self.entry).parent = parent.clone();
@@ -331,7 +529,16 @@ impl<T: PartialOrd> Link<T> {
     }
 
     #[inline]
-    pub fn set_next(&mut self, next: &Link<T>) {
+    pub fn get_parent(&self) -> Link<I, T> {
+        if self.is_none() {
+            Link::<I, T>::none()
+        } else {
+            unsafe { (*self.entry).parent.clone() }
+        }
+    }
+
+    #[inline]
+    pub fn set_next(&mut self, next: &Link<I, T>) {
         if self.is_some() {
             unsafe {
                 (*self.entry).next = next.clone();
@@ -340,25 +547,60 @@ impl<T: PartialOrd> Link<T> {
     }
 
     #[inline]
-    pub fn set_prev(&mut self, prev: &Link<T>) {
+    pub fn set_prev(&mut self, prev: &Link<I, T>) {
         if self.is_some() {
             unsafe {
                 (*self.entry).prev = prev.clone();
             }
         }
     }
+
+    #[inline]
+    pub fn set_value(&mut self, value: T) {
+        if self.is_some() {
+            unsafe {
+                (*self.entry).value = value;
+            }
+        }
+    }
+
+    #[inline]
+    pub fn convert_to_singleton(&mut self) {
+        if self.is_some() {
+            unsafe {
+                (*self.entry).next = self.clone();
+                (*self.entry).prev = self.clone();
+            }
+        }
+    }
+
+    #[inline]
+    pub fn set_is_marked(&mut self, is_marked: bool) {
+        if self.is_some() {
+            unsafe { (*self.entry).is_marked = is_marked }
+        }
+    }
+
+    #[inline]
+    pub fn get_is_marked(&mut self) -> bool {
+        if self.is_some() {
+            unsafe { (*self.entry).is_marked }
+        } else {
+            false
+        }
+    }
 }
 
-impl<T: PartialOrd> Clone for Link<T> {
+impl<I: Eq + Hash + Copy + Debug, T: PartialOrd + Debug> Clone for Link<I, T> {
     #[inline]
     fn clone(&self) -> Self {
         Link { entry: self.entry.clone() }
     }
 }
 
-impl<T: PartialOrd> PartialEq for Link<T> {
+impl<I: Eq + Hash + Copy + Debug, T: PartialOrd + Debug> PartialEq for Link<I, T> {
     #[inline]
-    fn eq(&self, other: &Link<T>) -> bool {
+    fn eq(&self, other: &Link<I, T>) -> bool {
         if self.is_none() || other.is_none() {
             false
         } else {
@@ -367,9 +609,9 @@ impl<T: PartialOrd> PartialEq for Link<T> {
     }
 }
 
-impl<T: PartialOrd> PartialOrd for Link<T> {
+impl<I: Eq + Hash + Copy + Debug, T: PartialOrd + Debug> PartialOrd for Link<I, T> {
     #[inline]
-    fn partial_cmp(&self, other: &Link<T>) -> Option<Ordering> {
+    fn partial_cmp(&self, other: &Link<I, T>) -> Option<Ordering> {
         if self.is_none() || other.is_none() {
             None
         } else {
@@ -382,7 +624,7 @@ impl<T: PartialOrd> PartialOrd for Link<T> {
 fn test_size() {
     let mut heap = FibonacciHeap::new();
 
-    heap.push(1);
+    heap.push(100, 1);
 
     assert_eq!(1, heap.size);
 }
@@ -391,7 +633,7 @@ fn test_size() {
 fn test_min() {
     let mut heap = FibonacciHeap::new();
 
-    heap.push(1);
+    heap.push(100, 1);
 
     assert_eq!(1, *heap.min().unwrap());
 }
@@ -400,23 +642,25 @@ fn test_min() {
 fn test_pop() {
     let mut heap = FibonacciHeap::new();
 
-    heap.push(1);
+    heap.push(100, 1);
 
     assert_eq!(1, heap.pop().unwrap());
+    assert_eq!(None, heap.get(100));
+    assert_eq!(0, heap.size);
 }
 
 #[test]
 fn test_order() {
     let mut heap = FibonacciHeap::new();
 
-    heap.push(7);
-    heap.push(1);
-    heap.push(8);
-    heap.push(4);
-    heap.push(5);
-    heap.push(2);
-    heap.push(3);
-    heap.push(6);
+    heap.push(107, 7);
+    heap.push(101, 1);
+    heap.push(108, 8);
+    heap.push(104, 4);
+    heap.push(105, 5);
+    heap.push(102, 2);
+    heap.push(103, 3);
+    heap.push(106, 6);
 
     assert_eq!(1, heap.pop().unwrap());
     assert_eq!(2, heap.pop().unwrap());
@@ -428,6 +672,28 @@ fn test_order() {
     assert_eq!(8, heap.pop().unwrap());
 }
 
+#[test]
+fn test_decrease_key() {
+    let mut heap = FibonacciHeap::new();
+
+    heap.push(107, 7);
+    heap.push(101, 1);
+    heap.push(108, 8);
+
+    heap.decrease_key(107, 4);
+
+    assert_eq!(1, heap.pop().unwrap());
+    assert_eq!(4, heap.pop().unwrap());
+    assert_eq!(8, heap.pop().unwrap());
+}
+
+#[test]
+fn test_get() {
+    let mut heap = FibonacciHeap::new();
+    heap.push(107, 7);
+    assert_eq!(Some(&7), heap.get(107));
+}
+
 #[bench]
 fn bench_push_pop(b: &mut ::test::Bencher) {
     b.iter(|| {
@@ -435,11 +701,26 @@ fn bench_push_pop(b: &mut ::test::Bencher) {
         let mut heap = FibonacciHeap::new();
 
         for i in 1..10001 {
-            heap.push(10001 - i);
+            heap.push(10001 - i, 10001 - i);
         }
 
         for _ in 1..10001 {
             heap.pop();
+        }
+    })
+}
+
+#[bench]
+fn bench_decrease_key(b: &mut ::test::Bencher) {
+    b.iter(|| {
+        let mut heap = FibonacciHeap::new();
+
+        for i in 1..10001 {
+            heap.push(10001 - i, 10001 - i);
+        }
+
+        for i in 1..10001 {
+            heap.decrease_key(10001 - i, 10001 - i - 1);
         }
     })
 }
