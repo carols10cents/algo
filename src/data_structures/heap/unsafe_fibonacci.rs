@@ -68,109 +68,203 @@ impl<I: Eq + Hash + Copy + Debug, T: PartialOrd + Debug> FibonacciHeap<I, T> {
     }
 
     pub fn pop(&mut self) -> Option<T> {
+        // https://github.com/jgrapht/jgrapht/blob/master/jgrapht-core/src/main/java/org/jgrapht/util/FibonacciHeap.java#L237
         if self.is_empty() {
             return None;
         }
 
+        let mut z = Link::none();
+        mem::swap(&mut z, &mut self.min);
+        // println!("popping z, is {:?}", z.borrow());
+
+        let mut num_kids = z.get_degree();
+        let mut x = z.get_child();
+        // println!("x is {:?}", x.borrow());
+        let mut temp_next;
+
+        // for each child of z do...
+        while num_kids > 0 {
+            temp_next = x.get_next();
+
+            // remove x from child list
+            x.get_prev().set_next(&x.get_next());
+            x.get_next().set_prev(&x.get_prev());
+
+            // add x to root list of heap
+            x.set_prev(&z);
+            x.set_next(&z.get_next());
+            z.set_next(&x);
+            x.get_next().set_prev(&x);
+
+            // set parent[x] to null
+            x.set_parent(&Link::none());
+            x = temp_next;
+            // println!("next x is {:?}", x.borrow());
+            num_kids -= 1;
+        }
+
+        // remove z from root list of heap
+        z.get_prev().set_next(&z.get_next());
+        z.get_next().set_prev(&z.get_prev());
+
+        if z.get_next().are_same(&z) {
+            self.min = Link::none();
+        } else {
+            // println!("temporarily setting min to {:?} and calling consolidate", z.get_next().borrow());
+            self.min = z.get_next();
+            self.consolidate();
+        }
+
+        // decrement size of heap
         self.size -= 1;
 
-        let mut min = Link::none();
-        mem::swap(&mut min, &mut self.min);
-
-        if !min.get_next().are_same(&min) {
-            let mut min_prev = min.get_prev();
-            let mut min_next = min.get_next();
-            min_prev.set_next(&min_next);
-            min_next.set_prev(&min_prev);
-            self.min = min_next;
-        }
-
-        let min_child = min.get_child();
-        if !min_child.is_none() {
-            let mut current = min_child.clone();
-            while {
-                current.set_parent(&Link::none());
-                current = current.get_next();
-
-                !current.are_same(&min_child)
-            } {}
-        }
-
-        let mut new_min = Link::none();
-        mem::swap(&mut new_min, &mut self.min);
-
-        self.min = FibonacciHeap::<I, T>::merge_entries(new_min, min_child);
-
-        if self.size == 0 {
-            if let Some(id) = min.get_id() {
-                self.lookup.remove(&id);
-            }
-            return min.into_value();
-        }
-
-        let mut current = self.min.clone();
-        while self.to_visit.is_empty() || !self.to_visit[0].are_same(&current) {
-            let next = current.get_next();
-            self.to_visit.push(current);
-            current = next;
-        }
-
-        for link_to_visit in &self.to_visit {
-            let mut link = link_to_visit.clone();
-
-            loop {
-                let link_degree = link.get_degree();
-
-                while link_degree >= self.tree_table.len() {
-                    self.tree_table.push(Link::none());
-                }
-
-                if self.tree_table[link_degree].is_none() {
-                    self.tree_table[link_degree] = link.clone();
-                    break;
-                }
-
-                self.tree_table.push(Link::none());
-                let other = self.tree_table.swap_remove(link_degree);
-
-                let (mut min_link, mut max) = if link < other {
-                    (link, other)
-                } else {
-                    (other, link)
-                };
-
-                let mut max_next = max.get_next();
-                let mut max_prev = max.get_prev();
-                max_next.set_prev(&max_prev);
-                max_prev.set_next(&max_next);
-
-                let max_clone = max.clone();
-                max.set_prev(&max_clone);
-                max.set_next(&max_clone);
-
-                max.set_parent(&min_link);
-
-                let min_link_child = min_link.get_child();
-                min_link.set_child(&FibonacciHeap::<I, T>::merge_entries(min_link_child, max));
-                // max.is_marked = false;
-
-                min_link.inc_degree();
-
-                link = min_link;
-            }
-
-            if link <= self.min {
-                self.min = link;
-            }
-        }
-
-        self.to_visit.clear();
-        self.tree_table.clear();
-
-        if let Some(id) = min.get_id() {
+        if let Some(id) = z.get_id() {
             self.lookup.remove(&id);
         }
-        min.into_value()
+        z.into_value()
+    }
+
+    // https://github.com/jgrapht/jgrapht/blob/master/jgrapht-core/src/main/java/org/jgrapht/util/FibonacciHeap.java#L423
+    fn consolidate(&mut self) {
+        // println!("START CONSOLIDATE =============");
+        let one_over_log_phi: f64 = 1.0 / ((1.0 + 5.0f64.sqrt()).ln() / 2.0);
+        let array_size: usize = (((self.size as f64).ln() * one_over_log_phi).floor() as usize) + 1;
+        // println!("array size is {}", array_size);
+        let mut array = vec![Link::none(); array_size];
+
+        // Find the number of root nodes.
+        let mut num_roots = 0;
+        let mut x = self.min.clone();
+        // println!("x at start of consolidate is {:?}", x.borrow());
+
+        if x.is_some() {
+            num_roots += 1;
+            x = x.get_next();
+            // println!("x next is {:?}", x.borrow());
+            while !x.are_same(&self.min) {
+                num_roots += 1;
+                x = x.get_next();
+                // println!("x next in loop is {:?}", x.borrow());
+            }
+        }
+
+        // println!("num_roots is initially {}", num_roots);
+
+        // For each node in root list do...
+        while num_roots > 0 {
+            // Access this node's degree..
+            let mut d = x.get_degree();
+            // println!("set d to {}", d);
+            let next = x.get_next();
+
+            // ..and see if there's another of the same degree.
+            loop {
+                match array.get(d) {
+                    None => {
+                        // println!("array.get({}) is None", d);
+                        break
+                    }, // Nope.
+                    Some(y) if y.is_none() => {
+                        // println!("array.get({}) is_none", d);
+                        break
+                    }, // Nope.
+                    Some(y) => {
+                        // println!("collision at {} with {:?}, {:?}", d, x.borrow(), y.borrow());
+                        // There is, make one of the nodes a child of the other.
+                        // Do this based on the key value.
+                        if x > *y {
+                            // println!("setting x {:?} to child, y {:?} to parent", x.borrow(), y.borrow());
+                            self.link(x.clone(), y.clone());
+                            x = y.clone();
+                            // println!("x, the new parent, is now {:?} with child {:?}", x.borrow(), x.get_child().borrow());
+                        } else {
+                            // println!("setting y {:?} to child, x {:?} to parent", y.borrow(), x.borrow());
+                            self.link(y.clone(), x.clone());
+                        }
+                    },
+                };
+                // We've handled this degree, go to next one.
+                // println!("setting array[{}] to Link::none", d);
+                array[d] = Link::none();
+                d += 1;
+                // println!("d is now {}", d);
+            }
+            // Save this node for later when we might encounter another
+            // of the same degree.
+            // println!("saving parent in array[{}] = {:?}", d, x.borrow());
+            array[d] = x;
+
+            // Move forward through list.
+            x = next;
+            num_roots -= 1;
+            // println!("num_roots is now {}", num_roots);
+        }
+
+        // Set min to null (effectively losing the root list) and
+        // reconstruct the root list from the array entries in array[].
+        self.min = Link::none();
+
+        // println!("for i in {:?}", 0..array_size);
+
+        for i in 0..array_size {
+            match array.get(i) {
+                None => {
+                    // println!("array.get(i) for {} is None", i);
+                    continue
+                },
+                Some(y) if y.is_none() => {
+                    // println!("array.get(i) for {} is_none", i);
+                    continue
+                },
+                Some(y) => {
+                    // println!("array.get(i) for {} is {:?}", i, y.borrow());
+                    // We've got a live one, add it to root list.
+                    if self.min.is_some() {
+                        // First remove node from root list.
+                        y.get_prev().set_next(&y.get_next());
+                        y.get_next().set_prev(&y.get_prev());
+
+                        let mut min = Link::none();
+                        mem::swap(&mut min, &mut self.min);
+
+                        // println!("deciding on min between curr min {:?} and y {:?}", min.borrow(), y.borrow());
+
+                        // Now add to root list, again.
+                        self.min = FibonacciHeap::<I, T>::concat_into_root_list(min, y.clone());
+                        // println!("min is now {:?}", self.min.borrow());
+                    } else {
+                        // println!("first min is {:?}", y.borrow());
+                        self.min = y.clone();
+                    }
+                }
+            }
+        }
+    }
+
+    fn link(&mut self, mut child: Link<I, T>, mut parent: Link<I, T>) {
+        // remove child from root list of heap
+        child.get_prev().set_next(&child.get_next());
+        child.get_next().set_prev(&child.get_prev());
+
+        // make the child a child of the parent
+        child.set_parent(&parent);
+        let mut parent_current_child = parent.get_child();
+
+        if parent_current_child.is_none() {
+            parent.set_child(&child);
+            child.convert_to_singleton();
+        } else {
+            child.set_prev(&parent_current_child);
+            child.set_next(&parent_current_child.get_next());
+            parent_current_child.set_next(&child);
+            child.get_next().set_prev(&child);
+        }
+
+        // increase degree of the parent
+        parent.inc_degree();
+
+        // set mark of the child to false
+        child.set_is_marked(false);
     }
 
     pub fn get(&self, id: I) -> Option<&T> {
